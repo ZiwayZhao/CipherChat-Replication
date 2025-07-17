@@ -1,0 +1,23 @@
+# API密钥和敏感信息
+.env
+*.key
+config.ini
+secrets.json
+api_keys.txt
+
+# Python缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 实验结果缓存
+*.cache
+temp/
+logs/ 

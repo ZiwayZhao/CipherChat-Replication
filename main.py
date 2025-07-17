@@ -1,3 +1,4 @@
+import os
 import os.path
 import time
 import openai
@@ -9,9 +10,18 @@ from prompts_and_demonstrations import system_role_propmts, demonstration_dict, 
 from encode_experts import encode_expert_dict
 from utils import get_data, convert_sample_to_prompt, add_color_to_text, OutOfQuotaException, AccessTerminatedException
 
+# 安全地获取API密钥
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
-OPENAI_API_KEY = ""    # you should write your api key here
-wait_time = 20    # to avoid the rate limitation of OpenAI api
+# 检查API密钥是否存在
+if not DEEPSEEK_API_KEY:
+    raise ValueError("请设置环境变量 DEEPSEEK_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("请设置环境变量 OPENAI_API_KEY")
+    
+wait_time = 3    # to avoid the rate limitation of OpenAI api
 
 da = torch.load("data/data_en_zh.dict") # load data
 
@@ -40,13 +50,33 @@ def query_function(args, api_key, prompt, messages, model_name):
             response = chat_completion["choices"][0]["text"]
             time.sleep(wait_time)
         else: # if we use chatgpt or gpt-4
-            chat_completion = openai.ChatCompletion.create(
-                model=model_name,
-                api_key=api_key,
-                messages=messages,
-                temperature=temperature,
-            )
-            response = chat_completion["choices"][0]["message"]["content"]
+            if "deepseek" in model_name.lower():
+                # 使用DeepSeek API
+                original_api_base = openai.api_base
+                openai.api_base = DEEPSEEK_BASE_URL
+                openai.api_key = DEEPSEEK_API_KEY
+                
+                chat_completion = openai.ChatCompletion.create(
+                    model=model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    timeout=60,  # 60秒超时
+                )
+                response = chat_completion["choices"][0]["message"]["content"]
+                
+                # 恢复OpenAI API设置
+                openai.api_base = original_api_base
+                openai.api_key = OPENAI_API_KEY
+            else:
+                # 使用OpenAI API
+                chat_completion = openai.ChatCompletion.create(
+                    model=model_name,
+                    api_key=api_key,
+                    messages=messages,
+                    temperature=temperature,
+                    timeout=60,  # 60秒超时
+                )
+                response = chat_completion["choices"][0]["message"]["content"]
             time.sleep(wait_time)
         try:
             decode_response = args.expert.decode(response) # decipher the response
@@ -65,9 +95,10 @@ def query_function(args, api_key, prompt, messages, model_name):
 
         chat_completion = openai.ChatCompletion.create(
             model="gpt-4-0613",
-            api_key=api_key,
+            api_key=OPENAI_API_KEY,
             messages=toxic_detection_prompt,
             temperature=temperature,
+            timeout=60,  # 60秒超时
         )
         time.sleep(wait_time)
         detection_response = chat_completion["choices"][0]["message"]["content"]
@@ -90,8 +121,8 @@ def main():
     parser = argparse.ArgumentParser(description='The information about data, models and methods')
     parser.add_argument("--model_name", type=str,
                         default=
-                        ["gpt-3.5-turbo-0613", "gpt-4-0613", "text-davinci-003", "text-curie-001",
-                         "text-babbage-001"][1])
+                        ["deepseek-chat", "deepseek-reasoner", "gpt-3.5-turbo-0613", "gpt-4-0613", "text-davinci-003", "text-curie-001",
+                         "text-babbage-001"][0])
     parser.add_argument("--data_path", type=str, default=["data/data_en_zh.dict", ][0])
     parser.add_argument("--encode_method", type=str, default=["unchange", "ascii", "caesar",
                                                               "baseline", "unicode",
@@ -212,7 +243,11 @@ def main():
                     done_flag[to_be_queried_idx] = False
                     logging.warning(e)
 
-        run_remaining(OPENAI_API_KEY)
+        # 根据模型类型选择API密钥
+        if "deepseek" in model_name.lower():
+            run_remaining(DEEPSEEK_API_KEY)
+        else:
+            run_remaining(OPENAI_API_KEY)
 
     assert all(done_flag), f"Not all done. Check api-keys and rerun."
 
